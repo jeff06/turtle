@@ -7,9 +7,11 @@ import (
 	"context"
 	"fmt"
 	"github.com/eiannone/keyboard"
+	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/option"
+	"os"
 	"strings"
 )
 
@@ -29,7 +31,10 @@ func executeDrive(cmd *cobra.Command, args []string) {
 	order, _ := cmd.Flags().GetString("order")
 	pageSize, _ := cmd.Flags().GetInt("pagesize")
 	maxResult, _ := cmd.Flags().GetInt("maxresult")
+	preventEnter, _ := cmd.Flags().GetBool("prevententer")
 	currentNumberOfResult := 0
+	t := table.NewWriter()
+	displayTableHeader(t)
 	for {
 		filesListCall := driveService.Files.List()
 
@@ -63,32 +68,40 @@ func executeDrive(cmd *cobra.Command, args []string) {
 				return
 			}
 			currentNumberOfResult++
-			listReturnedFile(file)
+			listReturnedFile(file, t, currentNumberOfResult)
 		}
 
 		nextPageToken = fileList.NextPageToken
 		if nextPageToken == "" {
 			break
 		}
-		char, _, err := keyboard.GetSingleKey()
-		if err != nil {
-			panic(err)
-		}
-		if char == '\x00' {
-			continue
+
+		if !preventEnter {
+			char, _, err := keyboard.GetSingleKey()
+			if err != nil {
+				panic(err)
+			}
+			if char == '\x00' {
+				continue
+			}
 		}
 	}
-
+	t.Render()
 }
 
-func listReturnedFile(file *drive.File) {
+func displayTableHeader(t table.Writer) {
+	t.SetOutputMirror(os.Stdout)
+	t.AppendHeader(table.Row{"#", "Type", "Id", "File name"})
+}
+
+func listReturnedFile(file *drive.File, t table.Writer, l int) {
 	var fileEntityName string = ""
 	if strings.HasPrefix(file.MimeType, "application/vnd.google-apps.folder") {
 		fileEntityName += "folder"
 	} else {
 		fileEntityName = file.MimeType
 	}
-	fmt.Printf("%s - %s - %s", fileEntityName, file.Id, file.Name)
+	t.AppendRow([]interface{}{l, fileEntityName, file.Id, file.Name})
 	fmt.Printf("\n")
 }
 
@@ -97,4 +110,5 @@ func init() {
 	ListCmd.Flags().StringP("qfilter", "q", "", "Q Filter. For syntax help, visit https://developers.google.com/drive/api/guides/search-files")
 	ListCmd.Flags().IntP("pagesize", "p", 10, "Number of items shown per page")
 	ListCmd.Flags().IntP("maxresult", "m", 30, "Number of total items retrieved")
+	ListCmd.Flags().BoolP("prevententer", "e", false, "Prevent enter at the end of each pagesize")
 }
