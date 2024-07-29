@@ -12,8 +12,20 @@ import (
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/option"
 	"os"
+	"strconv"
 	"strings"
 )
+
+type Options struct {
+	qFilter       string
+	order         string
+	pageSize      int
+	maxResult     int
+	preventEnter  bool
+	fields        string
+	error         []error
+	nextPageToken string
+}
 
 // listCmd represents the list command
 var ListCmd = &cobra.Command{
@@ -26,36 +38,19 @@ var ListCmd = &cobra.Command{
 func executeDrive(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 	driveService, _ := drive.NewService(ctx, option.WithCredentialsFile("/home/jeffrey/.config/turtle-cli/turtle-cli-drive-key.json"))
-	var nextPageToken string
-	qfilter, _ := cmd.Flags().GetString("qfilter")
-	order, _ := cmd.Flags().GetString("order")
-	pageSize, _ := cmd.Flags().GetInt("pagesize")
-	maxResult, _ := cmd.Flags().GetInt("maxresult")
-	preventEnter, _ := cmd.Flags().GetBool("prevententer")
 	currentNumberOfResult := 0
+	currentOption, isValidated := validateOptions(cmd)
+	if !isValidated {
+		return
+	}
 	t := table.NewWriter()
-	displayTableHeader(t)
+	splitField := strings.Split(currentOption.fields, ",")
+	for i := range splitField {
+		splitField[i] = strings.TrimSpace(splitField[i])
+	}
+	displayTableHeader(t, splitField)
 	for {
-		filesListCall := driveService.Files.List()
-
-		if pageSize > 0 {
-			filesListCall.PageSize(int64(pageSize))
-		} else {
-			fmt.Println("pagesize must be greater than zero")
-			return
-		}
-
-		if order != "" {
-			filesListCall.OrderBy(order)
-		}
-
-		if qfilter != "" {
-			filesListCall.Q(qfilter)
-		}
-
-		if nextPageToken != "" {
-			filesListCall.PageToken(nextPageToken)
-		}
+		filesListCall := buildQuery(driveService, currentOption)
 
 		fileList, err := filesListCall.Do()
 		if err != nil {
@@ -64,19 +59,19 @@ func executeDrive(cmd *cobra.Command, args []string) {
 		}
 
 		for _, file := range fileList.Files {
-			if currentNumberOfResult >= maxResult {
+			if currentNumberOfResult >= currentOption.maxResult {
 				return
 			}
 			currentNumberOfResult++
-			listReturnedFile(file, t, currentNumberOfResult)
+			listReturnedFile(file, t, currentNumberOfResult, splitField)
 		}
 
-		nextPageToken = fileList.NextPageToken
-		if nextPageToken == "" {
+		currentOption.nextPageToken = fileList.NextPageToken
+		if currentOption.nextPageToken == "" {
 			break
 		}
 
-		if !preventEnter {
+		if !currentOption.preventEnter {
 			char, _, err := keyboard.GetSingleKey()
 			if err != nil {
 				panic(err)
@@ -89,20 +84,87 @@ func executeDrive(cmd *cobra.Command, args []string) {
 	t.Render()
 }
 
-func displayTableHeader(t table.Writer) {
-	t.SetOutputMirror(os.Stdout)
-	t.AppendHeader(table.Row{"#", "Type", "Id", "File name"})
+func buildQuery(service *drive.Service, currentOption Options) *drive.FilesListCall {
+	filesListCall := service.Files.List()
+	if currentOption.pageSize > 0 {
+		filesListCall.PageSize(int64(currentOption.pageSize))
+	} else {
+		fmt.Println("pagesize must be greater than zero")
+		return nil
+	}
+
+	if currentOption.order != "" {
+		filesListCall.OrderBy(currentOption.order)
+	}
+
+	if currentOption.qFilter != "" {
+		filesListCall.Q(currentOption.qFilter)
+	}
+
+	if currentOption.nextPageToken != "" {
+		filesListCall.PageToken(currentOption.nextPageToken)
+	}
+
+	return filesListCall
 }
 
-func listReturnedFile(file *drive.File, t table.Writer, l int) {
-	var fileEntityName string = ""
-	if strings.HasPrefix(file.MimeType, "application/vnd.google-apps.folder") {
-		fileEntityName += "folder"
-	} else {
-		fileEntityName = file.MimeType
+func displayTableHeader(t table.Writer, fields []string) {
+	t.SetOutputMirror(os.Stdout)
+	var currentRow = table.Row{"#"}
+	for _, field := range fields {
+		currentRow = append(currentRow, field)
 	}
-	t.AppendRow([]interface{}{l, fileEntityName, file.Id, file.Name})
+	t.AppendHeader(currentRow)
+}
+
+func listReturnedFile(file *drive.File, t table.Writer, l int, fields []string) {
+	elementTodDisplay := ""
+	var currentRpw = table.Row{l}
+	for _, field := range fields {
+		switch field {
+		case "mimeType":
+			if strings.HasPrefix(file.MimeType, "application/vnd.google-apps.folder") {
+				elementTodDisplay += "folder"
+			} else {
+				elementTodDisplay = file.MimeType
+			}
+			break
+		case "name":
+			elementTodDisplay = file.Name
+			break
+		case "id":
+			elementTodDisplay = file.Id
+			break
+		case "trashed":
+			elementTodDisplay = strconv.FormatBool(file.Trashed)
+			break
+		default:
+			elementTodDisplay = "Not supported"
+		}
+		currentRpw = append(currentRpw, elementTodDisplay)
+	}
+	t.AppendRow(currentRpw)
 	fmt.Printf("\n")
+}
+
+func validateOptions(cmd *cobra.Command) (Options, bool) {
+	qfilter, qfilterError := cmd.Flags().GetString("qfilter")
+	order, orderError := cmd.Flags().GetString("order")
+	pageSize, pageSizeError := cmd.Flags().GetInt("pagesize")
+	maxResult, maxResultError := cmd.Flags().GetInt("maxresult")
+	preventEnter, preventEnterError := cmd.Flags().GetBool("prevententer")
+	fields, fieldsError := cmd.Flags().GetString("fields")
+	currentOption := Options{
+		qFilter:      qfilter,
+		order:        order,
+		pageSize:     pageSize,
+		maxResult:    maxResult,
+		preventEnter: preventEnter,
+		fields:       fields,
+		error:        []error{qfilterError, orderError, pageSizeError, maxResultError, preventEnterError, fieldsError},
+	}
+
+	return currentOption, true
 }
 
 func init() {
@@ -111,4 +173,5 @@ func init() {
 	ListCmd.Flags().IntP("pagesize", "p", 10, "Number of items shown per page")
 	ListCmd.Flags().IntP("maxresult", "m", 30, "Number of total items retrieved")
 	ListCmd.Flags().BoolP("prevententer", "e", false, "Prevent enter at the end of each pagesize")
+	ListCmd.Flags().StringP("fields", "f", "", "Fields to be displayed. Not all field ar implemented. If one you require is not there, please open an issue. For more info, visit https://developers.google.com/drive/api/reference/rest/v3/files")
 }
