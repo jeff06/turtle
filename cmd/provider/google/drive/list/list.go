@@ -10,6 +10,7 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	"os"
 	"strconv"
@@ -93,6 +94,11 @@ func buildQuery(service *drive.Service, currentOption Options) *drive.FilesListC
 		return nil
 	}
 
+	if currentOption.fields != "" {
+		var currentFields []googleapi.Field = []googleapi.Field{"nextPageToken", googleapi.Field("files(" + currentOption.fields + ")")}
+		filesListCall.Fields(currentFields...)
+	}
+
 	if currentOption.order != "" {
 		filesListCall.OrderBy(currentOption.order)
 	}
@@ -119,7 +125,7 @@ func displayTableHeader(t table.Writer, fields []string) {
 
 func listReturnedFile(file *drive.File, t table.Writer, l int, fields []string) {
 	elementTodDisplay := ""
-	var currentRpw = table.Row{l}
+	var currentRow = table.Row{l}
 	for _, field := range fields {
 		switch field {
 		case "mimeType":
@@ -141,9 +147,9 @@ func listReturnedFile(file *drive.File, t table.Writer, l int, fields []string) 
 		default:
 			elementTodDisplay = "Not supported"
 		}
-		currentRpw = append(currentRpw, elementTodDisplay)
+		currentRow = append(currentRow, elementTodDisplay)
 	}
-	t.AppendRow(currentRpw)
+	t.AppendRow(currentRow)
 	fmt.Printf("\n")
 }
 
